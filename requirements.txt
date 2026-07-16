@@ -1,0 +1,9 @@
+sentence-transformers==5.3.0
+spacy==3.8.14
+pytextrank==3.3.0
+langchain-ollama==1.0.1
+pyspark==3.5.1
+yt-dlp==2026.7.4
+faster-whisper==1.2.1
+pandas==2.3.2
+pytest==9.0.2

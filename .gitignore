@@ -1,0 +1,13 @@
+data/iceberg/
+data/audio/
+.env
+__pycache__/
+*.pyc
+
+# Tooling / planning artifacts — not part of the shipped project
+.claude/
+.pytest_cache/
+.notebook/
+planning/
+.DS_Store
+podcast_nlp_roadmap.md

@@ -1,0 +1,34 @@
+[
+  {
+    "segment_id": 1,
+    "text": "Welcome back to the show. Today we're talking with Maria Chen about the future of large language models."
+  },
+  {
+    "segment_id": 2,
+    "text": "Maria Chen has spent the last decade building infrastructure for distributed training at scale."
+  },
+  {
+    "segment_id": 3,
+    "text": "So let's just dive right in."
+  },
+  {
+    "segment_id": 4,
+    "text": ""
+  },
+  {
+    "segment_id": 5,
+    "text": "One thing I keep coming back to is how much compute costs have fallen. Five years ago this conversation would have looked completely different. Now a small team can train something respectable on a modest budget."
+  },
+  {
+    "segment_id": 6,
+    "text": "Switching gears, let's talk about sourdough starters and why mine keeps dying every winter."
+  },
+  {
+    "segment_id": 7,
+    "text": "Honestly, keeping a starter alive in a cold apartment is its own science experiment."
+  },
+  {
+    "segment_id": 8,
+    "text": "Before we wrap up, John Kim from the audience sent in a question about whether Maria Chen and John Kim will collaborate on an open dataset next year."
+  }
+]
