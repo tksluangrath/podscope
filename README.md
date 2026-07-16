@@ -67,23 +67,41 @@ PyTextRank sentence score).
 
 ## Project layout
 
-```
-src/
-  ingest.py          # yt-dlp download + hostname validation
-  transcribe.py       # faster-whisper transcription
-  metrics.py          # compression_ratio, semantic_similarity, textrank_score
-  db.py               # PySpark + Iceberg read/write (the only file that imports pyspark)
-  run.py              # orchestration: ingest -> transcribe -> NLP -> metrics -> db
-  processors/
-    base.py            # NLPProcessor interface
-    registry.py         # dispatches all 4 processors
-    extractive.py        # spaCy + PyTextRank extractive summary
-    entities.py           # spaCy NER
-    topics.py              # topic segmentation
-    abstractive.py          # Ollama-backed abstractive summary
-analysis/
-  co_occurrence.py    # cross-video entity co-occurrence, run separately from run.py
-tests/                 # pytest suite (mocks all external I/O except db.py's Spark tests)
+```mermaid
+flowchart TD
+    subgraph src["src/"]
+        ingest["ingest.py\nyt-dlp download + hostname validation"]
+        transcribe["transcribe.py\nfaster-whisper transcription"]
+        metrics["metrics.py\ncompression_ratio, semantic_similarity, textrank_score"]
+        db["db.py\nPySpark + Iceberg read/write\n(only file that imports pyspark)"]
+        run["run.py\norchestration: ingest -> transcribe -> NLP -> metrics -> db"]
+        subgraph processors["src/processors/"]
+            base["base.py\nNLPProcessor interface"]
+            registry["registry.py\ndispatches all 4 processors"]
+            extractive["extractive.py\nspaCy + PyTextRank extractive summary"]
+            entities["entities.py\nspaCy NER"]
+            topics["topics.py\ntopic segmentation"]
+            abstractive["abstractive.py\nOllama-backed abstractive summary"]
+        end
+    end
+    subgraph analysis["analysis/"]
+        co_occurrence["co_occurrence.py\ncross-video entity co-occurrence\n(run separately from run.py)"]
+    end
+    subgraph tests["tests/"]
+        testsuite["pytest suite\nmocks all external I/O except db.py's Spark tests"]
+    end
+
+    run --> ingest
+    run --> transcribe
+    run --> registry
+    run --> metrics
+    run --> db
+    registry --> base
+    registry --> extractive
+    registry --> entities
+    registry --> topics
+    registry --> abstractive
+    db --> co_occurrence
 ```
 
 ## Requirements
