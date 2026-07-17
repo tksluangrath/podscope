@@ -1,5 +1,6 @@
 data/iceberg/
 data/audio/
+data/neo4j/
 .env
 __pycache__/
 *.pyc
