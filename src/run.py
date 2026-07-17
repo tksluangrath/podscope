@@ -21,6 +21,7 @@ import spacy
 
 from src import db, ingest, metrics, transcribe
 from src.processors import registry
+from src.processors.abstractive import AbstractiveSummarizer
 from src.processors.topics import TopicSegmenter
 
 # ponytail: honor OLLAMA_HOST (set by docker-compose.yml to reach the host's
@@ -147,6 +148,7 @@ def main() -> None:
     parser.add_argument("--warehouse", type=str, default="data/iceberg")
     parser.add_argument("--model-size", type=str, default="base")
     parser.add_argument("--topic-threshold", type=float, default=0.35)
+    parser.add_argument("--llm-model", type=str, default="llama3")
     args = parser.parse_args()
 
     _preflight_check()
@@ -157,6 +159,12 @@ def main() -> None:
             for p in registry.PROCESSORS:
                 if isinstance(p, TopicSegmenter):
                     p.threshold = args.topic_threshold
+
+        if args.llm_model != "llama3":
+            registry.PROCESSORS = [
+                AbstractiveSummarizer(model=args.llm_model) if isinstance(p, AbstractiveSummarizer) else p
+                for p in registry.PROCESSORS
+            ]
 
         if args.url:
             process_video(args.url, spark, args.model_size)

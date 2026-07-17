@@ -3,6 +3,7 @@ data/audio/
 .env
 __pycache__/
 *.pyc
+urls*.txt
 
 # Tooling / planning artifacts — not part of the shipped project
 .claude/
