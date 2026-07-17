@@ -4,7 +4,13 @@ from langchain_ollama import ChatOllama
 
 from src.processors.base import NLPProcessor
 
-_SYSTEM_PROMPT = "Summarize this transcript segment in 1-2 concise sentences."
+_SYSTEM_PROMPT = (
+    "Summarize this transcript segment in 1-2 concise sentences. "
+    "The segment is a raw speech-to-text fragment and may be short or start "
+    "mid-sentence -- summarize whatever content it has. Output only the "
+    "summary itself, with no preamble, disclaimers, or commentary about the "
+    "transcript's length or completeness."
+)
 
 
 class AbstractiveSummarizer(NLPProcessor):
