@@ -74,6 +74,12 @@ def build_spark(warehouse_path: str) -> SparkSession:
         .config("spark.sql.catalog.local.type", "hadoop")
         .config("spark.sql.catalog.local.warehouse", warehouse_path)
         .config("spark.sql.parquet.compression.codec", "zstd")
+        # ponytail: local-mode Spark's driver heartbeat competes for CPU with
+        # this same process's Ollama/faster-whisper calls -- on a long batch
+        # run the default 120s executor-timeout got starved long enough that
+        # Spark killed the executor and crashed the whole job. Bump the
+        # timeout rather than reduce concurrency elsewhere.
+        .config("spark.network.timeout", "800s")
         .getOrCreate()
     )
 
