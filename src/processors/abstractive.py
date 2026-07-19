@@ -24,8 +24,14 @@ class AbstractiveSummarizer(NLPProcessor):
         # kill with Spark/sentence-transformers/spaCy/faster-whisper/Ollama
         # all resident at once. num_ctx/num_predict capped to what a 1-2
         # sentence summary of a short transcript segment actually needs.
+        # num_gpu=16 offloads roughly half of an 8B model's 32 transformer
+        # layers to the Metal GPU, running the rest on CPU, to keep sustained
+        # GPU load down during long batch runs -- approximate, not exact;
+        # re-measure with `powermetrics --samplers gpu_power` and retune if
+        # still too high or unnecessarily low.
         self.llm = llm if llm is not None else ChatOllama(
-            model=model, timeout=120, keep_alive=0, num_ctx=512, num_predict=128
+            model=model, timeout=120, keep_alive=0, num_ctx=512, num_predict=128,
+            num_gpu=16,
         )
 
     def process(self, segments: list[dict]) -> list[dict]:
