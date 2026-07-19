@@ -18,8 +18,15 @@ class AbstractiveSummarizer(NLPProcessor):
 
     def __init__(self, llm: BaseChatModel | None = None, model: str = "llama3.2:latest"):
         # ponytail: generous 120s timeout — CPU-bound local generation can
-        # easily exceed typical HTTP client defaults.
-        self.llm = llm if llm is not None else ChatOllama(model=model, timeout=120)
+        # easily exceed typical HTTP client defaults. keep_alive=0 releases
+        # the model from memory after each call instead of Ollama's default
+        # 5-minute hold -- a real multi-hour batch run hit a macOS jetsam
+        # kill with Spark/sentence-transformers/spaCy/faster-whisper/Ollama
+        # all resident at once. num_ctx/num_predict capped to what a 1-2
+        # sentence summary of a short transcript segment actually needs.
+        self.llm = llm if llm is not None else ChatOllama(
+            model=model, timeout=120, keep_alive=0, num_ctx=512, num_predict=128
+        )
 
     def process(self, segments: list[dict]) -> list[dict]:
         results = []
