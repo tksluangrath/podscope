@@ -97,6 +97,14 @@ def process_video(url: str, spark, model_size: str) -> None:
     processor's output -- including entities' segment_id -- already carries
     the global ID, with no second remap needed later.
     """
+    # ponytail: cheap no-network check before paying for a full download --
+    # matters for batch restarts, where every already-done video would
+    # otherwise be re-downloaded just to be thrown away by the check below.
+    peeked_id = ingest.peek_video_id(url)
+    if peeked_id is not None and db.video_exists(spark, peeked_id):
+        print(f"Video {peeked_id} already processed, skipping.")
+        return
+
     audio_path, title, video_id = ingest.download_audio(url)
 
     if db.video_exists(spark, video_id):

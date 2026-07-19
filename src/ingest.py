@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
 
@@ -16,6 +16,21 @@ def _is_youtube_url(url: str) -> bool:
     if host.startswith("www."):
         host = host[4:]
     return host in _ALLOWED_HOSTS or any(host.endswith("." + h) for h in _ALLOWED_HOSTS)
+
+
+def peek_video_id(url: str) -> str | None:
+    """Best-effort extraction of a video_id straight from the URL, with no
+    network call -- lets a caller skip a batch's already-processed videos
+    without paying for a full download first. Returns None on any URL shape
+    this can't confidently parse (caller should fall back to downloading and
+    letting download_audio's own info-dict id be authoritative).
+    """
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host in ("youtu.be",) or host.endswith(".youtu.be"):
+        return parsed.path.lstrip("/") or None
+    v = parse_qs(parsed.query).get("v")
+    return v[0] if v else None
 
 
 def download_audio(url: str, output_dir: str = "data/audio") -> tuple[str, str, str]:

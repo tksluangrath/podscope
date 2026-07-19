@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.ingest import _is_youtube_url, download_audio
+from src.ingest import _is_youtube_url, download_audio, peek_video_id
 
 
 def test_is_youtube_url_rejects_non_youtube_hostname() -> None:
@@ -22,6 +22,19 @@ def test_download_audio_raises_runtimeerror_for_non_youtube_url_without_calling_
         with pytest.raises(RuntimeError):
             download_audio("https://example.com/video")
         mock_ydl.assert_not_called()
+
+
+def test_peek_video_id_extracts_from_watch_url() -> None:
+    assert peek_video_id("https://www.youtube.com/watch?v=abc123") == "abc123"
+
+
+def test_peek_video_id_extracts_from_youtu_be_short_link() -> None:
+    assert peek_video_id("https://youtu.be/abc123") == "abc123"
+
+
+def test_peek_video_id_returns_none_for_unparseable_url() -> None:
+    assert peek_video_id("https://www.youtube.com/watch") is None
+    assert peek_video_id("https://example.com/video") is None
 
 
 def test_download_audio_extracts_path_title_video_id_without_hardcoding_extension() -> None:
