@@ -48,6 +48,31 @@ def test_run_all_defaults_to_module_level_processors(monkeypatch):
     assert result == {"fake_a": [{"segment_id": 1, "value": 1}, {"segment_id": 2, "value": 1}]}
 
 
+class FakeTopicSegmenter(NLPProcessor):
+    name = "topic_segmenter"
+
+    def process(self, segments):
+        return [{"segment_id": s["segment_id"], "topic_label": "topic_0"} for s in segments]
+
+
+class FakeAbstractive(NLPProcessor):
+    name = "abstractive_summary"
+
+    def __init__(self):
+        self.seen_segments = None
+
+    def process(self, segments):
+        self.seen_segments = segments
+        return [{"segment_id": s["segment_id"], "summary": "x"} for s in segments]
+
+
+def test_run_all_merges_topic_label_onto_abstractive_summary_input():
+    segments = [{"segment_id": 1, "text": "hello"}, {"segment_id": 2, "text": "world"}]
+    abstractive = FakeAbstractive()
+    run_all(segments, processors=[FakeTopicSegmenter(), abstractive])
+    assert [s.get("topic_label") for s in abstractive.seen_segments] == ["topic_0", "topic_0"]
+
+
 def test_run_all_does_not_mutate_input_segments():
     segments = [{"segment_id": 1, "text": "hello"}, {"segment_id": 2, "text": "world"}]
     original = [dict(s) for s in segments]

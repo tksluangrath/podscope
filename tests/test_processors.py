@@ -150,7 +150,9 @@ class TestAbstractiveSummarizer:
     def fixture_segments(self):
         return _load_fixture_segments()
 
-    def test_process_calls_invoke_once_per_segment_not_batch(self, fixture_segments):
+    def test_process_calls_invoke_once_per_segment_when_no_topic_label(self, fixture_segments):
+        # No topic_label on these fixtures -- each segment falls back to
+        # its own group, matching the pre-topic-grouping behavior.
         fake = FakeLLM([f"summary {i}" for i in range(len(fixture_segments))])
         summarizer = AbstractiveSummarizer(llm=fake)
         summarizer.process(fixture_segments)
@@ -180,6 +182,42 @@ class TestAbstractiveSummarizer:
         before = deepcopy(fixture_segments)
         summarizer.process(fixture_segments)
         assert fixture_segments == before
+
+    def test_process_calls_invoke_once_per_topic_group(self):
+        segments = [
+            {"segment_id": 1, "text": "a", "topic_label": "topic_0"},
+            {"segment_id": 2, "text": "b", "topic_label": "topic_0"},
+            {"segment_id": 3, "text": "c", "topic_label": "topic_1"},
+        ]
+        fake = FakeLLM(["group summary 0", "group summary 1"])
+        summarizer = AbstractiveSummarizer(llm=fake)
+        results = summarizer.process(segments)
+        assert len(fake.calls) == 2
+        assert [r["summary"] for r in results] == [
+            "group summary 0", "group summary 0", "group summary 1",
+        ]
+
+    def test_process_combines_group_text_into_one_prompt(self):
+        segments = [
+            {"segment_id": 1, "text": "Why?", "topic_label": "topic_0"},
+            {"segment_id": 2, "text": "Because reasons.", "topic_label": "topic_0"},
+        ]
+        fake = FakeLLM(["combined summary"])
+        summarizer = AbstractiveSummarizer(llm=fake)
+        summarizer.process(segments)
+        assert "Why?" in fake.calls[0]
+        assert "Because reasons." in fake.calls[0]
+
+    def test_process_preserves_order_across_topic_groups(self):
+        segments = [
+            {"segment_id": 1, "text": "a", "topic_label": "topic_0"},
+            {"segment_id": 2, "text": "b", "topic_label": "topic_0"},
+            {"segment_id": 3, "text": "c", "topic_label": "topic_1"},
+        ]
+        fake = FakeLLM(["s0", "s1"])
+        summarizer = AbstractiveSummarizer(llm=fake)
+        results = summarizer.process(segments)
+        assert [r["segment_id"] for r in results] == [1, 2, 3]
 
     def test_constructing_without_injected_llm_builds_real_chatollama(self):
         from langchain_ollama import ChatOllama

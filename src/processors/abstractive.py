@@ -8,11 +8,12 @@ from langchain_ollama import ChatOllama
 from src.processors.base import NLPProcessor
 
 _SYSTEM_PROMPT = (
-    "Summarize this transcript segment in 1-2 concise sentences. "
-    "The segment is a raw speech-to-text fragment and may be short or start "
-    "mid-sentence -- summarize whatever content it has. Output only the "
-    "summary itself, with no preamble, disclaimers, or commentary about the "
-    "transcript's length or completeness."
+    "Summarize this transcript excerpt in 1-2 concise sentences. "
+    "It's a contiguous chunk of a single topic from a raw speech-to-text "
+    "transcript and may start or end mid-sentence -- summarize the actual "
+    "content, not the transcript's format. Output only the summary itself, "
+    "with no preamble, disclaimers, or commentary about the transcript's "
+    "length or completeness."
 )
 
 # ponytail: this Mac has 16GB total unified memory shared by Spark/spaCy/
@@ -87,25 +88,49 @@ class AbstractiveSummarizer(NLPProcessor):
         )
 
     def process(self, segments: list[dict]) -> list[dict]:
-        results = []
+        # Group contiguous segments by topic_label so each LLM call sees a
+        # whole topic's dialogue instead of one raw ASR fragment (often a
+        # few words, no context) at a time -- summarizing fragments like
+        # "Why?" or "That's right." in isolation produced generic or
+        # outright hallucinated summaries. A segment with no topic_label
+        # (e.g. process() called directly, outside the topic-aware registry
+        # pipeline) falls back to its own group -- the old one-call-per-
+        # segment behavior -- instead of silently merging unrelated
+        # segments into one call.
+        groups: dict[object, list[dict]] = {}
+        order: list[object] = []
         for i, segment in enumerate(segments):
+            key = segment.get("topic_label")
+            if key is None:
+                key = f"__no_topic_{i}__"
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(segment)
+
+        summary_by_id: dict[int, str] = {}
+        for i, key in enumerate(order):
+            group = groups[key]
             # ponytail: cheap guardrail, not a speed technique -- checked
             # every 20 calls (a `ollama ps` subprocess call is ~tens of ms,
             # negligible next to the ~1-2s per LLM call) so a runaway
             # resident size fails loudly with a clear message instead of
-            # silently pressuring the rest of the machine for the other
-            # ~690 segments of a long video.
+            # silently pressuring the rest of the machine for the remaining
+            # topic groups of a long video.
             if i % 20 == 0:
                 resident = ollama_resident_gb(self.model)
                 if resident > OLLAMA_RESIDENT_CEILING_GB:
                     raise RuntimeError(
                         f"Ollama resident memory ({resident:.2f} GB) exceeded the "
                         f"{OLLAMA_RESIDENT_CEILING_GB} GB ceiling while summarizing "
-                        f"segment {i}/{len(segments)} -- stopping before it pressures "
+                        f"topic group {i}/{len(order)} -- stopping before it pressures "
                         "the rest of the machine. Lower OLLAMA_RESIDENT_CEILING_GB's "
                         "assumptions or switch to a smaller model."
                     )
-            prompt = f"{_SYSTEM_PROMPT}\n\n{segment['text']}"
+            combined_text = "\n".join(s["text"] for s in group if s["text"])
+            prompt = f"{_SYSTEM_PROMPT}\n\n{combined_text}"
             response = self.llm.invoke(prompt)
-            results.append({"segment_id": segment["segment_id"], "summary": response.content})
-        return results
+            for s in group:
+                summary_by_id[s["segment_id"]] = response.content
+
+        return [{"segment_id": s["segment_id"], "summary": summary_by_id[s["segment_id"]]} for s in segments]
