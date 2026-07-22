@@ -25,8 +25,14 @@ flowchart LR
     D2 --> F
     D3 --> F
     F --> G[Cross-video\nco-occurrence analysis]
-    G --> H[Power BI dashboard]
+    F --> I["analysis/export_csv.py"]
+    I --> H[Power BI\nvia CSV import]
 ```
+
+`python -m analysis.export_csv` dumps `videos`, `segments`, `entities`, and
+`co_occurrences` to `data/exports/*.csv` — point Power BI's Text/CSV or
+Folder connector at that directory. Re-run any time you want a fresh
+snapshot; it overwrites the files from scratch.
 
 ## Compression ratio algorithm
 

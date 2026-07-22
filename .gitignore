@@ -2,6 +2,7 @@ data/iceberg/
 data/audio/
 data/neo4j/
 data/logs/
+data/exports/
 .env
 __pycache__/
 *.pyc
