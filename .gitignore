@@ -5,6 +5,7 @@ data/logs/
 .env
 __pycache__/
 *.pyc
+*.egg-info/
 urls*.txt
 
 # Tooling / planning artifacts — not part of the shipped project

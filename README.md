@@ -130,6 +130,16 @@ python src/run.py --urls-file urls.txt
 python analysis/co_occurrence.py --min-videos 2 --top-n 30
 ```
 
+### TUI
+
+```bash
+pip install -e .
+podscope   # or: python -m src.tui
+```
+
+A terminal landing screen to paste a URL, watch progress, and browse history --
+launches instantly and runs the pipeline above in the background.
+
 ## Docker
 
 Runs the pipeline in a container against a host-run Ollama instance:

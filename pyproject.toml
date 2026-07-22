@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "podscope"
+version = "0.1.0"
+description = "Local, zero-cost multi-video NLP analysis pipeline for YouTube"
+requires-python = ">=3.11"
+dependencies = [
+    "sentence-transformers==5.3.0",
+    "spacy==3.8.14",
+    "pytextrank==3.3.0",
+    "langchain-ollama==1.0.1",
+    "pyspark==3.5.1",
+    "yt-dlp==2026.7.4",
+    "faster-whisper==1.2.1",
+    "pandas==2.3.2",
+    "neo4j==6.2.0",
+    "textual>=0.70.0",
+]
+
+[project.scripts]
+podscope = "src.tui:main"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
