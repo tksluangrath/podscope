@@ -154,7 +154,11 @@ def main() -> None:
     group.add_argument("--url", type=str, help="Single video URL")
     group.add_argument("--urls-file", type=str, help="Newline-separated file of URLs")
     parser.add_argument("--warehouse", type=str, default="data/iceberg")
-    parser.add_argument("--model-size", type=str, default="base")
+    # ponytail: "tiny" over "base" is a measured, named accuracy tradeoff
+    # (more transcription errors, especially uncommon words/accents) traded
+    # for closing the 5-minute single-video wall-clock budget -- see
+    # BENCHMARKS.md for the before/after numbers this was picked from.
+    parser.add_argument("--model-size", type=str, default="tiny")
     parser.add_argument("--topic-threshold", type=float, default=0.35)
     parser.add_argument("--llm-model", type=str, default="llama3")
     args = parser.parse_args()
