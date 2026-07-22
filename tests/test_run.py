@@ -1,7 +1,8 @@
 from copy import deepcopy
 from unittest.mock import MagicMock
 
-from src.run import _assign_entity_ids, _merge_nlp, _remap_segment_ids
+import src.run as run_module
+from src.run import _assign_entity_ids, _merge_nlp, _remap_segment_ids, process_playlist
 
 
 def _make_nlp_results():
@@ -107,3 +108,50 @@ def test_merge_nlp_preserves_already_global_entity_segment_ids():
     _merge_nlp(segments, nlp_results)
 
     assert nlp_results["entities"] == entities_before
+
+
+def test_process_playlist_continues_past_single_episode_failure(monkeypatch):
+    monkeypatch.setattr(run_module.ingest, "expand_playlist", lambda url: ["url1", "url2", "url3"])
+    monkeypatch.setattr(run_module.ingest, "peek_video_id", lambda url: url.replace("url", "id"))
+
+    calls = []
+
+    def fake_process_video(url, spark, model_size):
+        calls.append(url)
+        if url == "url2":
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(run_module, "process_video", fake_process_video)
+
+    results = process_playlist("playlist_url", spark=MagicMock(), model_size="tiny")
+
+    assert calls == ["url1", "url2", "url3"]  # continued past the failure
+    assert results == [("url1", None), ("url2", "boom"), ("url3", None)]
+
+
+def test_process_playlist_prints_episode_done_sentinel_for_every_entry(monkeypatch, capsys):
+    monkeypatch.setattr(run_module.ingest, "expand_playlist", lambda url: ["url1", "url2"])
+    monkeypatch.setattr(run_module.ingest, "peek_video_id", lambda url: url.replace("url", "id"))
+
+    def fake_process_video(url, spark, model_size):
+        if url == "url2":
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(run_module, "process_video", fake_process_video)
+
+    process_playlist("playlist_url", spark=MagicMock(), model_size="tiny")
+
+    out = capsys.readouterr().out
+    assert "PODSCOPE_EPISODE_DONE 1/2 id1 ok" in out
+    assert "PODSCOPE_EPISODE_DONE 2/2 id2 failed" in out
+
+
+def test_process_playlist_falls_back_to_unknown_when_peek_fails(monkeypatch, capsys):
+    monkeypatch.setattr(run_module.ingest, "expand_playlist", lambda url: ["url1"])
+    monkeypatch.setattr(run_module.ingest, "peek_video_id", lambda url: None)
+    monkeypatch.setattr(run_module, "process_video", lambda url, spark, model_size: None)
+
+    process_playlist("playlist_url", spark=MagicMock(), model_size="tiny")
+
+    out = capsys.readouterr().out
+    assert "PODSCOPE_EPISODE_DONE 1/1 unknown ok" in out

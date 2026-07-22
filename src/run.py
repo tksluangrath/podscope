@@ -3,11 +3,14 @@ into a single-video pipeline and a CLI over it.
 
 `_remap_segment_ids`, `_assign_entity_ids`, and `_merge_nlp` are pure
 functions with no I/O, so they're unit tested directly (tests/test_run.py).
-`_preflight_check`, `process_video`, `process_batch`, and `main` glue those
-pure functions to real Spark/Ollama/yt-dlp/whisper calls -- they're exercised
-only by a manual end-to-end run, not pytest, since testing them would mean
-mocking every I/O boundary for no real coverage gain over the pure-function
-tests plus the E2E smoke run.
+`_preflight_check`, `process_video`, `process_batch`, `process_playlist`, and
+`main` glue those pure functions to real Spark/Ollama/yt-dlp/whisper calls --
+they're exercised only by a manual end-to-end run, not pytest, since testing
+them fully would mean mocking every I/O boundary for no real coverage gain
+over the pure-function tests plus the E2E smoke run. `process_playlist`'s own
+per-episode continue-past-failure loop and sentinel printing are worth
+testing in isolation though, with `expand_playlist`/`process_video` mocked
+out -- see tests/test_run.py.
 """
 
 from __future__ import annotations
@@ -148,6 +151,41 @@ def process_batch(urls_file: str, spark, model_size: str) -> list[tuple[str, str
     return results
 
 
+def process_playlist(url: str, spark, model_size: str) -> list[tuple[str, str | None]]:
+    """Expand url into its episodes (src.ingest.expand_playlist) and process
+    each one, continuing past per-episode failures exactly like
+    process_batch does for a pre-built URL list -- same failure policy, not
+    a second one invented for playlists.
+
+    Prints a PODSCOPE_EPISODE_DONE sentinel after every episode, success or
+    failure, for src/tui.py's stdout-line parser to pick up (same mechanism
+    it already uses for "[download]" and "already processed" -- see
+    tui.py's run_pipeline).
+    """
+    urls = ingest.expand_playlist(url)
+    total = len(urls)
+
+    results: list[tuple[str, str | None]] = []
+    for i, video_url in enumerate(urls, start=1):
+        video_id = ingest.peek_video_id(video_url) or "unknown"
+        try:
+            process_video(video_url, spark, model_size)
+            results.append((video_url, None))
+            print(f"PODSCOPE_EPISODE_DONE {i}/{total} {video_id} ok")
+        except Exception as e:
+            print(f"Failed to process {video_url}: {e}")
+            results.append((video_url, str(e)))
+            print(f"PODSCOPE_EPISODE_DONE {i}/{total} {video_id} failed")
+    return results
+
+
+def _print_batch_summary(results: list[tuple[str, str | None]]) -> None:
+    failures = [(u, e) for u, e in results if e is not None]
+    print(f"Processed {len(results)} URLs: {len(results) - len(failures)} succeeded, {len(failures)} failed.")
+    for url, error in failures:
+        print(f"  FAILED {url}: {error}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Podscope ingestion pipeline")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -179,13 +217,12 @@ def main() -> None:
             ]
 
         if args.url:
-            process_video(args.url, spark, args.model_size)
+            if ingest.is_playlist_url(args.url):
+                _print_batch_summary(process_playlist(args.url, spark, args.model_size))
+            else:
+                process_video(args.url, spark, args.model_size)
         else:
-            results = process_batch(args.urls_file, spark, args.model_size)
-            failures = [(u, e) for u, e in results if e is not None]
-            print(f"Processed {len(results)} URLs: {len(results) - len(failures)} succeeded, {len(failures)} failed.")
-            for url, error in failures:
-                print(f"  FAILED {url}: {error}")
+            _print_batch_summary(process_batch(args.urls_file, spark, args.model_size))
     finally:
         spark.stop()
 

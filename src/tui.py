@@ -15,10 +15,15 @@ from pathlib import Path
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Button, DataTable, Footer, Input, ProgressBar, Static
+
+# ingest.py imports only yt_dlp -- no Spark/spaCy/Ollama -- ~0.1s, well
+# within the <2s cold-start budget, so it's safe at module level (unlike
+# src.run/src.db, which stay import-inside-handler-only).
+from src import ingest
 
 Path("data/logs").mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
@@ -41,7 +46,9 @@ def validate_url(url: str) -> tuple[bool, str]:
     if not url:
         return False, "Please enter a YouTube URL"
     if any(re.match(p, url) for p in YOUTUBE_PATTERNS):
-        return True, "playlist" if "list=" in url else "video"
+        # ingest.is_playlist_url is the one definition of "what counts as a
+        # playlist URL" -- src/run.py's CLI dispatch uses the same rule.
+        return True, "playlist" if ingest.is_playlist_url(url) else "video"
     return False, "Must be a youtube.com or youtu.be URL"
 
 
@@ -62,6 +69,30 @@ class PipelineFailed(Message):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__()
+
+
+class EpisodeDone(Message):
+    """One PODSCOPE_EPISODE_DONE sentinel line, parsed from run.py's stdout
+    by run_pipeline (see EPISODE_DONE_RE below)."""
+
+    def __init__(self, index: int, total: int, video_id: str, ok: bool) -> None:
+        self.index = index
+        self.total = total
+        self.video_id = video_id
+        self.ok = ok
+        super().__init__()
+
+
+class PlaylistComplete(Message):
+    def __init__(self, url: str, succeeded_video_ids: list[str], total: int, failed: int) -> None:
+        self.url = url
+        self.succeeded_video_ids = succeeded_video_ids
+        self.total = total
+        self.failed = failed
+        super().__init__()
+
+
+EPISODE_DONE_RE = re.compile(r"PODSCOPE_EPISODE_DONE (\d+)/(\d+) (\S+) (ok|failed)")
 
 
 class HistoryScreen(Screen):
@@ -148,6 +179,11 @@ class PodscoreApp(App):
         padding: 1 2;
         margin-top: 1;
     }
+    #episode-rows {
+        height: auto;
+        max-height: 8;
+        margin-top: 1;
+    }
     .accent { color: #cba6f7; }
     .muted { color: #a6adc8; }
     .error { color: #f38ba8; }
@@ -217,14 +253,6 @@ class PodscoreApp(App):
             error.update(kind)
             return
         error.update("")
-        if kind == "playlist":
-            # ponytail: run.py has no playlist ingestion path today (only
-            # --url for one video or --urls-file for a pre-built list) --
-            # building a fake per-episode progress UI (spec State 4) with
-            # nothing behind it would just be decoration. Point the user at
-            # the real single-video path instead of pretending this works.
-            error.update("Playlists aren't wired up yet -- paste one video URL at a time.")
-            return
         self._url_kind = kind
         self._current_url = url
         await self._start_running(url)
@@ -238,18 +266,29 @@ class PodscoreApp(App):
         self._start_time = time.monotonic()
         self._phase = "Starting up"
         self._last_download_ts = 0.0
-        panel = Vertical(
-            Static(f'Processing: "{url}"'),
-            Static("", id="step-line", classes="accent"),
-            ProgressBar(id="progress-bar", show_eta=False),
-            Horizontal(Button("Cancel", id="btn-cancel")),
-            id="progress-panel",
-        )
+
+        if self._url_kind == "playlist":
+            panel = Vertical(
+                Static(f'Playlist: "{url}"'),
+                Static("", id="step-line", classes="accent"),
+                VerticalScroll(id="episode-rows"),
+                ProgressBar(id="progress-bar", show_eta=False),
+                Horizontal(Button("Cancel", id="btn-cancel")),
+                id="progress-panel",
+            )
+        else:
+            panel = Vertical(
+                Static(f'Processing: "{url}"'),
+                Static("", id="step-line", classes="accent"),
+                ProgressBar(id="progress-bar", show_eta=False),
+                Horizontal(Button("Cancel", id="btn-cancel")),
+                id="progress-panel",
+            )
         await shell.mount(panel)
         self.query_one("#progress-bar", ProgressBar).update(total=None)
         self._render_step_line()
         self._timer = self.set_interval(1.0, self._render_step_line)
-        self.run_pipeline(url)
+        self.run_pipeline(url, self._url_kind)
 
     def _render_step_line(self) -> None:
         try:
@@ -268,22 +307,25 @@ class PodscoreApp(App):
             self._timer = None
 
     @work(exclusive=True, thread=True)
-    def run_pipeline(self, url: str) -> None:
+    def run_pipeline(self, url: str, kind: str) -> None:
         # Imported here, not at module level -- subprocess isolates the
         # Spark JVM / Ollama calls in a child process so the TUI's own
-        # event loop never blocks on their ~8s startup cost.
+        # event loop never blocks on their ~8s startup cost. --url auto-
+        # detects playlist vs. video (same rule as validate_url), so no
+        # separate CLI flag/subprocess branch is needed here either.
         import subprocess
         import sys
 
         def peek_video_id() -> str | None:
             try:
-                from src import ingest
-
                 return ingest.peek_video_id(url)
             except Exception:
                 log.exception("peek_video_id failed for %s", url)
                 return None
 
+        succeeded: list[str] = []
+        episode_total = 0
+        episode_failed = 0
         tail: list[str] = []
         try:
             process = subprocess.Popen(
@@ -297,10 +339,24 @@ class PodscoreApp(App):
                 line = line.rstrip()
                 tail.append(line)
                 tail[:] = tail[-20:]
-                self.post_message(PipelineProgress(line))
+                m = EPISODE_DONE_RE.search(line)
+                if m:
+                    index, total, video_id, status = m.groups()
+                    episode_total = int(total)
+                    ok = status == "ok"
+                    if ok:
+                        succeeded.append(video_id)
+                    else:
+                        episode_failed += 1
+                    self.post_message(EpisodeDone(int(index), episode_total, video_id, ok))
+                else:
+                    self.post_message(PipelineProgress(line))
             process.wait()
             if process.returncode == 0:
-                self.post_message(PipelineComplete(url, peek_video_id()))
+                if kind == "playlist":
+                    self.post_message(PlaylistComplete(url, succeeded, episode_total, episode_failed))
+                else:
+                    self.post_message(PipelineComplete(url, peek_video_id()))
             else:
                 log.error(
                     "run.py exited with code %s. Last output:\n%s",
@@ -323,6 +379,36 @@ class PodscoreApp(App):
             self._last_download_ts = time.monotonic()
         elif "already processed" in text:
             self._phase = "Already processed -- finishing up"
+        self._render_step_line()
+
+    async def on_episode_done(self, message: EpisodeDone) -> None:
+        # Episodes are processed strictly in order by process_playlist, one
+        # at a time -- so the row right after the one this sentinel just
+        # completed is always the one now running. No separate "started"
+        # sentinel needed for that inference.
+        rows = self.query_one("#episode-rows", VerticalScroll)
+        if not rows.children:
+            await rows.mount_all(
+                Static(f"○ Episode {i}/{message.total} -- waiting", id=f"episode-row-{i}", classes="muted")
+                for i in range(1, message.total + 1)
+            )
+
+        row = self.query_one(f"#episode-row-{message.index}", Static)
+        glyph, cls, label = ("✓", "success", "done") if message.ok else ("✗", "error", "failed")
+        row.set_classes(cls)
+        row.update(f"{glyph} Episode {message.index}/{message.total} ({message.video_id}) -- {label}")
+
+        next_index = message.index + 1
+        if next_index <= message.total:
+            try:
+                next_row = self.query_one(f"#episode-row-{next_index}", Static)
+                next_row.set_classes("accent")
+                next_row.update(f"⠋ Episode {next_index}/{message.total} -- running")
+            except Exception:
+                pass
+
+        self.query_one("#progress-bar", ProgressBar).update(total=message.total, progress=message.index)
+        self._phase = f"{message.index}/{message.total} episodes processed"
         self._render_step_line()
 
     # -- COMPLETE / ERROR ---------------------------------------------------
@@ -348,14 +434,48 @@ class PodscoreApp(App):
         else:
             self.query_one("#result-body", Static).update("Video processed.")
 
+    async def on_playlist_complete(self, message: PlaylistComplete) -> None:
+        self._stop_timer()
+        await self.query_one("#progress-panel").remove()
+        shell = self.query_one("#shell", Vertical)
+        succeeded = len(message.succeeded_video_ids)
+        await shell.mount(
+            Vertical(
+                Static(
+                    f"✓ Complete — {succeeded}/{message.total} episodes succeeded "
+                    f"({message.failed} failed)",
+                    classes="success",
+                ),
+                Static("", id="result-body", classes="muted"),
+                Horizontal(
+                    Button("Analyze Another", id="btn-analyze-another"),
+                    Button("View in History", id="btn-history"),
+                    Button("Quit", id="btn-quit"),
+                ),
+                id="result-panel",
+            )
+        )
+        if message.succeeded_video_ids:
+            self.load_result_stats(message.succeeded_video_ids)
+        else:
+            self.query_one("#result-body", Static).update(
+                "No episodes completed successfully -- see data/logs/tui.log."
+            )
+
     @work(thread=True)
-    def load_result_stats(self, video_id: str) -> None:
+    def load_result_stats(self, video_ids: str | list[str]) -> None:
+        # Accepts either one video_id (single-video run) or a list (playlist
+        # run, aggregated across every episode that succeeded) -- one query
+        # shape for both instead of a parallel single-video-only path.
         from src import db
+
+        ids = [video_ids] if isinstance(video_ids, str) else video_ids
 
         try:
             spark = db.build_spark("data/iceberg")
             try:
-                segs = db.read_segments(spark, video_id)
+                all_segs = db.read_segments(spark)
+                segs = all_segs.filter(all_segs.video_id.isin(ids))
                 agg = segs.selectExpr(
                     "count(*) as n",
                     "count(distinct topic_label) as topics",
@@ -368,7 +488,13 @@ class PodscoreApp(App):
                     .limit(1)
                     .collect()
                 )
-                n_entities = db.read_entities(spark, video_id).select("entity_text").distinct().count()
+                all_ents = db.read_entities(spark)
+                n_entities = (
+                    all_ents.filter(all_ents.video_id.isin(ids))
+                    .select("entity_text")
+                    .distinct()
+                    .count()
+                )
             finally:
                 spark.stop()
         except Exception:
