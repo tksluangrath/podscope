@@ -178,9 +178,15 @@ class VideoDetailScreen(Screen):
     def on_mount(self) -> None:
         self.load_detail()
 
+    # Topic list can run long on a busy video -- cap what's rendered so the
+    # screen stays scannable; the header says how many were left out.
+    MAX_TOPICS_SHOWN = 30
+
     @work(thread=True)
     def load_detail(self) -> None:
         # Imported here, not at module level -- avoids JVM init on TUI launch.
+        from pyspark.sql import functions as F
+
         from src import db
 
         status = self.query_one("#detail-status", Static)
@@ -194,7 +200,17 @@ class VideoDetailScreen(Screen):
                     "avg(compression_ratio) as avg_cr",
                     "avg(semantic_similarity) as avg_sim",
                 ).collect()[0]
-                sample = segs.orderBy("segment_id").limit(5).collect()
+                topic_rows = (
+                    segs.groupBy("topic_label")
+                    .agg(
+                        F.min("start_time").alias("start"),
+                        F.max("end_time").alias("end"),
+                        F.count("*").alias("n"),
+                        F.collect_list("abs_summary").alias("abs_summaries"),
+                    )
+                    .orderBy("start")
+                    .collect()
+                )
                 ents = db.read_entities(spark, self.video_id)
                 top_entities = (
                     ents.groupBy("entity_text", "entity_type")
@@ -219,11 +235,22 @@ class VideoDetailScreen(Screen):
             "Top entities:",
         ]
         lines += [f"  {e['entity_text']} ({e['entity_type']}): {e['count']}" for e in top_entities] or ["  none"]
-        lines += ["", "Sample segments:"]
-        for s in sample:
-            lines.append(f"  [{s['segment_id']}] {(s['ext_summary'] or '')[:100]}")
+
+        lines += ["", f"Topics ({len(topic_rows)} total):"]
+        for row in topic_rows[: self.MAX_TOPICS_SHOWN]:
+            summary = " ".join(s for s in row["abs_summaries"] if s)[:160]
+            lines.append(
+                f"  [{_fmt_time(row['start'])}-{_fmt_time(row['end'])}] ({row['n']} segs) {summary}"
+            )
+        if len(topic_rows) > self.MAX_TOPICS_SHOWN:
+            lines.append(f"  ... {len(topic_rows) - self.MAX_TOPICS_SHOWN} more topics not shown")
 
         self.app.call_from_thread(status.update, "\n".join(lines))
+
+
+def _fmt_time(seconds: float) -> str:
+    m, s = divmod(int(seconds), 60)
+    return f"{m}:{s:02d}"
 
 
 class PodscoreApp(App):

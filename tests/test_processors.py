@@ -118,20 +118,21 @@ class TestTopicSegmenter:
         results = segmenter.process(fixture_segments[:1])
         assert results[0]["topic_label"] == "topic_0"
 
-    def test_low_threshold_forces_boundary_on_dissimilar_segments(self, fixture_segments):
-        # segment_id 1 (AI/ML thread: "...future of large language models.")
-        # vs segment_id 6 (sourdough thread: "...sourdough starters...").
+    def test_zero_std_multiplier_forces_boundary_at_the_outlier_jump(self, fixture_segments):
+        # segment_id 1 (AI/ML thread) -> 6 (sourdough thread, a big jump) ->
+        # 7 (still sourdough, a small jump). threshold = mean of the two
+        # distances, so only the above-average jump (1->6) crosses it.
         by_id = {s["segment_id"]: s for s in fixture_segments}
-        pair = [by_id[1], by_id[6]]
-        results = TopicSegmenter(threshold=0.01).process(pair)
+        triple = [by_id[1], by_id[6], by_id[7]]
+        results = TopicSegmenter(std_multiplier=0.0).process(triple)
         assert results[0]["topic_label"] != results[1]["topic_label"]
+        assert results[1]["topic_label"] == results[2]["topic_label"]
 
-    def test_high_threshold_keeps_similar_segments_together(self, fixture_segments):
-        # segment_id 6 and segment_id 7 are both part of the sourdough thread.
+    def test_high_std_multiplier_keeps_everything_together(self, fixture_segments):
         by_id = {s["segment_id"]: s for s in fixture_segments}
-        pair = [by_id[6], by_id[7]]
-        results = TopicSegmenter(threshold=0.99).process(pair)
-        assert results[0]["topic_label"] == results[1]["topic_label"]
+        triple = [by_id[1], by_id[6], by_id[7]]
+        results = TopicSegmenter(std_multiplier=10.0).process(triple)
+        assert results[0]["topic_label"] == results[1]["topic_label"] == results[2]["topic_label"]
 
 
 class FakeLLM:

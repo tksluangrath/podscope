@@ -3,13 +3,13 @@
   "entity_count": 9,
   "topic_labels": [
     "topic_0",
+    "topic_0",
     "topic_1",
-    "topic_2",
-    "topic_3",
-    "topic_4",
-    "topic_5",
-    "topic_6",
-    "topic_7"
+    "topic_1",
+    "topic_1",
+    "topic_1",
+    "topic_1",
+    "topic_1"
   ],
   "compression_ratios": [
     0.3333333333333333,
