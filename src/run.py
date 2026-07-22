@@ -54,6 +54,19 @@ def _merge_nlp(segments: list[dict], nlp_results: dict[str, list[dict]]) -> list
     topics_by_id = {r["segment_id"]: r for r in nlp_results["topic_segmenter"]}
     abstractive_by_id = {r["segment_id"]: r for r in nlp_results["abstractive_summary"]}
 
+    # compression_ratio needs the text actually fed to the LLM, not any one
+    # segment's own fragment. abstractive_summary produces one summary per
+    # topic group (see AbstractiveSummarizer), so comparing its length
+    # against a single ~2-4s segment's word count made compression_ratio
+    # come out *above* 1.0 (a "compression" that's really an expansion)
+    # whenever a topic spanned more than a couple segments.
+    topic_texts: dict[str | None, list[str]] = {}
+    for seg in segments:
+        label = topics_by_id.get(seg["segment_id"], {}).get("topic_label")
+        if seg["text"]:
+            topic_texts.setdefault(label, []).append(seg["text"])
+    topic_original_text = {label: "\n".join(texts) for label, texts in topic_texts.items()}
+
     enriched = []
     for seg in segments:
         sid = seg["segment_id"]
@@ -65,11 +78,14 @@ def _merge_nlp(segments: list[dict], nlp_results: dict[str, list[dict]]) -> list
         abs_summary = abstr.get("summary", "")
         sentence_scores = ext.get("sentence_scores", [])
 
-        computed = metrics.compute_all(seg["text"], ext_summary, abs_summary, sentence_scores)
+        topic_label = topic.get("topic_label")
+        original_text = topic_original_text.get(topic_label, seg["text"])
+
+        computed = metrics.compute_all(original_text, ext_summary, abs_summary, sentence_scores)
 
         enriched.append({
             **seg,
-            "topic_label": topic.get("topic_label"),
+            "topic_label": topic_label,
             "ext_summary": ext_summary,
             "abs_summary": abs_summary,
             **computed,

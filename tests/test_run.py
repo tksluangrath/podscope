@@ -61,6 +61,43 @@ def test_merge_nlp_calls_compute_all_with_correct_arguments(monkeypatch):
     )
 
 
+def test_merge_nlp_computes_compression_ratio_against_full_topic_text(monkeypatch):
+    # Two segments share topic_0 and one abstractive summary (as
+    # AbstractiveSummarizer now produces per topic-group, not per segment).
+    # compression_ratio must be computed against BOTH segments' text joined
+    # -- the text actually fed to the LLM -- not either segment's own
+    # fragment alone, or it comes out inflated above 1.0.
+    fake_compute_all = MagicMock(return_value={
+        "compression_ratio": 0.5, "semantic_similarity": 0.8, "textrank_score": 0.9,
+    })
+    monkeypatch.setattr("src.metrics.compute_all", fake_compute_all)
+
+    segments = [
+        {"segment_id": 1, "text": "The cat sat."},
+        {"segment_id": 2, "text": "on the mat."},
+    ]
+    nlp_results = {
+        "extractive_summary": [
+            {"segment_id": 1, "summary": "The cat sat.", "sentence_scores": []},
+            {"segment_id": 2, "summary": "on the mat.", "sentence_scores": []},
+        ],
+        "topic_segmenter": [
+            {"segment_id": 1, "topic_label": "topic_0"},
+            {"segment_id": 2, "topic_label": "topic_0"},
+        ],
+        "abstractive_summary": [
+            {"segment_id": 1, "summary": "A cat sat on a mat."},
+            {"segment_id": 2, "summary": "A cat sat on a mat."},
+        ],
+        "entities": [],
+    }
+
+    _merge_nlp(segments, nlp_results)
+
+    for call in fake_compute_all.call_args_list:
+        assert call.args[0] == "The cat sat.\non the mat."
+
+
 def test_remap_segment_ids_applies_correct_offset():
     segments = [
         {"segment_id": 0, "text": "a"},

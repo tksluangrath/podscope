@@ -206,7 +206,12 @@ class VideoDetailScreen(Screen):
                         F.min("start_time").alias("start"),
                         F.max("end_time").alias("end"),
                         F.count("*").alias("n"),
-                        F.collect_list("abs_summary").alias("abs_summaries"),
+                        # abstractive_summary produces one summary per topic
+                        # group -- every segment in the group already carries
+                        # the identical string, so first() is enough. A
+                        # collect_list().join() here previously repeated
+                        # that same string once per segment in the group.
+                        F.first("abs_summary").alias("summary"),
                     )
                     .orderBy("start")
                     .collect()
@@ -238,7 +243,7 @@ class VideoDetailScreen(Screen):
 
         lines += ["", f"Topics ({len(topic_rows)} total):"]
         for row in topic_rows[: self.MAX_TOPICS_SHOWN]:
-            summary = " ".join(s for s in row["abs_summaries"] if s)[:160]
+            summary = (row["summary"] or "")[:160]
             lines.append(
                 f"  [{_fmt_time(row['start'])}-{_fmt_time(row['end'])}] ({row['n']} segs) {summary}"
             )
