@@ -213,7 +213,7 @@ def main() -> None:
     # for closing the 5-minute single-video wall-clock budget -- see
     # BENCHMARKS.md for the before/after numbers this was picked from.
     parser.add_argument("--model-size", type=str, default="tiny")
-    parser.add_argument("--topic-threshold", type=float, default=0.35)
+    parser.add_argument("--topic-std-multiplier", type=float, default=1.0)
     parser.add_argument("--llm-model", type=str, default="llama3")
     args = parser.parse_args()
 
@@ -221,10 +221,10 @@ def main() -> None:
 
     spark = db.build_spark(args.warehouse)
     try:
-        if args.topic_threshold != 0.35:
+        if args.topic_std_multiplier != 1.0:
             for p in registry.PROCESSORS:
                 if isinstance(p, TopicSegmenter):
-                    p.threshold = args.topic_threshold
+                    p.std_multiplier = args.topic_std_multiplier
 
         if args.llm_model != "llama3":
             registry.PROCESSORS = [
