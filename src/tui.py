@@ -109,6 +109,8 @@ class HistoryScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        table = self.query_one("#history-table", DataTable)
+        table.cursor_type = "row"
         self.load_history()
 
     @work(thread=True)
@@ -136,10 +138,92 @@ class HistoryScreen(Screen):
         def render() -> None:
             table.add_columns("Title", "Processed At", "Video ID")
             for r in rows:
-                table.add_row(r["title"] or "(untitled)", str(r["processed_at"]), r["video_id"])
-            status.update(f"{len(rows)} video(s) processed" if rows else "No videos processed yet")
+                # row_key = video_id, so on_data_table_row_selected doesn't
+                # need to re-parse it back out of the displayed column text.
+                table.add_row(
+                    r["title"] or "(untitled)", str(r["processed_at"]), r["video_id"], key=r["video_id"]
+                )
+            status.update(
+                f"{len(rows)} video(s) processed -- press enter for detail" if rows else "No videos processed yet"
+            )
 
         self.app.call_from_thread(render)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        video_id = str(event.row_key.value)
+        row = self.query_one("#history-table", DataTable).get_row(event.row_key)
+        title = row[0]
+        self.app.push_screen(VideoDetailScreen(video_id, title))
+
+
+class VideoDetailScreen(Screen):
+    """State 8 -- per-video detail: segment/entity stats, top entities, sample summaries."""
+
+    BINDINGS = [
+        Binding("escape", "app.pop_screen", "back"),
+        Binding("q", "app.pop_screen", "back"),
+    ]
+
+    def __init__(self, video_id: str, title: str) -> None:
+        super().__init__()
+        self.video_id = video_id
+        self.title = title
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.title, classes="accent")
+        with VerticalScroll(id="detail-body"):
+            yield Static("Loading...", id="detail-status", classes="muted")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.load_detail()
+
+    @work(thread=True)
+    def load_detail(self) -> None:
+        # Imported here, not at module level -- avoids JVM init on TUI launch.
+        from src import db
+
+        status = self.query_one("#detail-status", Static)
+        try:
+            spark = db.build_spark("data/iceberg")
+            try:
+                segs = db.read_segments(spark, self.video_id)
+                agg = segs.selectExpr(
+                    "count(*) as n",
+                    "count(distinct topic_label) as topics",
+                    "avg(compression_ratio) as avg_cr",
+                    "avg(semantic_similarity) as avg_sim",
+                ).collect()[0]
+                sample = segs.orderBy("segment_id").limit(5).collect()
+                ents = db.read_entities(spark, self.video_id)
+                top_entities = (
+                    ents.groupBy("entity_text", "entity_type")
+                    .count()
+                    .orderBy("count", ascending=False)
+                    .limit(10)
+                    .collect()
+                )
+            finally:
+                spark.stop()
+        except Exception:
+            log.exception("Failed to load video detail")
+            self.app.call_from_thread(status.update, "Could not load detail -- see data/logs/tui.log")
+            return
+
+        lines = [
+            f"Segments: {agg['n']} · Topics: {agg['topics']}",
+            f"Avg compression ratio: {agg['avg_cr']:.2f} · Avg semantic similarity: {agg['avg_sim']:.2f}"
+            if agg["avg_cr"] is not None and agg["avg_sim"] is not None
+            else "",
+            "",
+            "Top entities:",
+        ]
+        lines += [f"  {e['entity_text']} ({e['entity_type']}): {e['count']}" for e in top_entities] or ["  none"]
+        lines += ["", "Sample segments:"]
+        for s in sample:
+            lines.append(f"  [{s['segment_id']}] {(s['ext_summary'] or '')[:100]}")
+
+        self.app.call_from_thread(status.update, "\n".join(lines))
 
 
 class PodscoreApp(App):
