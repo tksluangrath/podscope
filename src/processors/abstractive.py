@@ -18,19 +18,25 @@ class AbstractiveSummarizer(NLPProcessor):
 
     def __init__(self, llm: BaseChatModel | None = None, model: str = "llama3.2:latest"):
         # ponytail: generous 120s timeout — CPU-bound local generation can
-        # easily exceed typical HTTP client defaults. keep_alive=0 releases
-        # the model from memory after each call instead of Ollama's default
-        # 5-minute hold -- a real multi-hour batch run hit a macOS jetsam
-        # kill with Spark/sentence-transformers/spaCy/faster-whisper/Ollama
-        # all resident at once. num_ctx/num_predict capped to what a 1-2
-        # sentence summary of a short transcript segment actually needs.
-        # num_gpu=16 offloads roughly half of an 8B model's 32 transformer
-        # layers to the Metal GPU, running the rest on CPU, to keep sustained
-        # GPU load down during long batch runs -- approximate, not exact;
-        # re-measure with `powermetrics --samplers gpu_power` and retune if
-        # still too high or unnecessarily low.
+        # easily exceed typical HTTP client defaults. keep_alive="2m" holds
+        # the model resident across one video's back-to-back per-segment
+        # calls (seconds apart) instead of reloading it from disk before
+        # every single call -- keep_alive=0 was fixing a real multi-hour
+        # batch-run jetsam kill (Spark/sentence-transformers/spaCy/
+        # faster-whisper/Ollama all resident at once) but paid that cost on
+        # every segment of every video, not just between videos. 2 minutes
+        # is short enough to still unload during the multi-minute gap
+        # between one video's abstractive stage ending and the next video's
+        # starting in a batch run, so the original OOM protection holds.
+        # num_ctx/num_predict capped to what a 1-2 sentence summary of a
+        # short transcript segment actually needs. num_gpu=16 offloads
+        # roughly half of an 8B model's 32 transformer layers to the Metal
+        # GPU, running the rest on CPU, to keep sustained GPU load down
+        # during long batch runs -- approximate, not exact; re-measure with
+        # `powermetrics --samplers gpu_power` and retune if still too high
+        # or unnecessarily low.
         self.llm = llm if llm is not None else ChatOllama(
-            model=model, timeout=120, keep_alive=0, num_ctx=512, num_predict=128,
+            model=model, timeout=120, keep_alive="2m", num_ctx=512, num_predict=128,
             num_gpu=16,
         )
 
