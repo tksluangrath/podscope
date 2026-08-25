@@ -1,9 +1,3 @@
----
-noteId: "71c930e0861211f1ad26b18ae806cea3"
-tags: []
-
----
-
 # Podscope
 
 A local, zero-cost multi-video NLP analysis pipeline. Point it at YouTube
